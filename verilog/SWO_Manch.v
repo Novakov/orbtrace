@@ -12,7 +12,7 @@ module swoManchIF (
 		   input 	    rst,          // Reset synchronised to clock
 		   input            clk,          // Module clock used for edge sampling
 		   
-		   // Downwards interface to the trace pins (1-n bits max, can be less)
+		   // Downwards interface to the swo pin
 		   input 	    SWOina,       // SWO data rising edge (LSB)
 		   input 	    SWOinb,       // SWO data falling edge (MSB)
 
