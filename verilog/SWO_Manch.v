@@ -94,97 +94,90 @@ module swoManchIF (
 	     
 	     activeCount <= newCount;
 			       
-	     // Guard to reset if we spend too long waiting for an edge
-	     if (activeCount > bitlen)
-	       begin
-		  // No transition for the duration of a bit....must be at the end
-		  decodeState <= DECODE_STATE_IDLE;
-	       end
-	     else
-	       case (decodeState)
-		 DECODE_STATE_IDLE: // --------------------------------------------------
+	     case (decodeState)
+	       DECODE_STATE_IDLE: // --------------------------------------------------
+		 begin
+		    halfbitlen  <= 0;
+		    activeCount <= 0;
+		    
+		    if (isEdge && (newState==1))
+		      begin
+			 activeCount <= newCount;
+			 decodeState <= DECODE_STATE_GET_HBLEN;
+		      end
+		 end
+	       
+	       DECODE_STATE_GET_HBLEN: // --------------------------------------------
+		 // If both halves are still high then extend count
+		 begin
+		    halfbitlen <= halfbitlen + bitsnow[0] + bitsnow[1];
+		    
+		    if (isEdge && (newState==0))
+		      begin
+			 halfbitlen  <= newCount;
+			 activeCount <= 0;
+			 bitcount    <= 0;
+			 
+			 // Get the first half of the bit
+			 decodeState <= DECODE_STATE_RXS_GETTING_BITS0;
+		      end
+		 end // case: DECODE_STATE_GET_HBLEN
+	       
+	       DECODE_STATE_RXS_GETTING_BITS0: // --------------------------------------------
+		 // First part of a bit
+		 if (isEdge)
 		   begin
-		      halfbitlen  <= 0;
-		      activeCount <= 0;
-		      
-		      if (isEdge && (newState==1))
+		      // This is an edge change here
+		      if (newCount < threeightbitlen)
 			begin
-			   activeCount <= newCount;
-			   decodeState <= DECODE_STATE_GET_HBLEN;
+			   // This is a change at the start of a bit..so now wait for the mid-change
+			   decodeState <= DECODE_STATE_RXS_GETTING_BITS1;
+			   activeCount <= bitsnow[1]!=bitsnow[0]?1:0;
 			end
-		   end
-		 
-		 DECODE_STATE_GET_HBLEN: // --------------------------------------------
-		   // If both halves are still high then extend count
+		      else
+			begin
+			   // This is a change in the middle of a bit..so here we need to record the value
+			   // but we stay in the GETTING_BITS0 state because we're looking for another bitstart
+			   construct[bitcount] <= bitsnow[2];
+			   bitcount            <= bitcount + 1;
+			   activeCount         <= bitsnow[1]!=bitsnow[0]?1:0;
+			   
+			   if (bitcount==7)
+			     begin
+				completeByte <= {construct[6:0],bitsnow[2]};
+				byteAvail    <= ~byteAvail;
+			     end
+			end
+		   end // else: !if(!isEdge)
+		 else
 		   begin
-		      halfbitlen <= halfbitlen + bitsnow[0] + bitsnow[1];
+		      if (newCount > bitlen)
+			decodeState <= DECODE_STATE_IDLE;
+		   end // else: !if(isEdge)
+	       
+	       DECODE_STATE_RXS_GETTING_BITS1: // --------------------------------------------
+		 if (isEdge)
+		   begin
+		      // This is definately a change in the middle of a bit..so here we need to record the value
+		      construct[bitcount] <= bitsnow[2];
+		      bitcount            <= bitcount + 1;
+		      activeCount         <= bitsnow[1]!=bitsnow[0]?1:0;
 		      
-		      if (isEdge && (newState==0))
+		      // The next bit we're looking for is the first half
+		      decodeState <= DECODE_STATE_RXS_GETTING_BITS0;
+		      
+		      if (bitcount==7)
 			begin
-			   halfbitlen  <= newCount;
-			   activeCount <= 0;
-			   bitcount    <= 0;
-
-			   // Get the first half of the bit
-			   decodeState <= DECODE_STATE_RXS_GETTING_BITS0;
+			   completeByte <= {construct[6:0],bitsnow[2]};
+			   byteAvail    <= ~byteAvail;
 			end
-		   end // case: DECODE_STATE_GET_HBLEN
-		 
-		 DECODE_STATE_RXS_GETTING_BITS0: // --------------------------------------------
-		   // First part of a bit
-		   if (isEdge)
-		     begin
-			// This is an edge change here
-			if (newCount < threeightbitlen)
-			  begin
-			     // This is a change at the start of a bit..so now wait for the mid-change
-			     decodeState <= DECODE_STATE_RXS_GETTING_BITS1;
-			     activeCount <= bitsnow[1]!=bitsnow[0]?1:0;
-			  end
-			else
-			  begin
-			     // This is a change in the middle of a bit..so here we need to record the value
-			     // but we stay in the GETTING_BITS0 state because we're looking for another bitstart
-			     construct[bitcount] <= bitsnow[2];
-			     bitcount            <= bitcount + 1;
-			     activeCount         <= bitsnow[1]!=bitsnow[0]?1:0;
-			     
-			     if (bitcount==7)
-			       begin
-				  completeByte <= {construct[6:0],bitsnow[2]};
-				  byteAvail    <= ~byteAvail;
-			       end
-			  end
-		     end // else: !if(!isEdge)
-		   else
-		     begin
-			if (newCount > bitlen)
-			  decodeState <= DECODE_STATE_IDLE;
-		     end // else: !if(isEdge)
-		 
-		 DECODE_STATE_RXS_GETTING_BITS1: // --------------------------------------------
-		   if (isEdge)
-		     begin
-			// This is definately a change in the middle of a bit..so here we need to record the value
-			construct[bitcount] <= bitsnow[2];
-			bitcount            <= bitcount + 1;
-			activeCount         <= bitsnow[1]!=bitsnow[0]?1:0;
-			
-			// The next bit we're looking for is the first half
-			decodeState <= DECODE_STATE_RXS_GETTING_BITS0;
-			
-			if (bitcount==7)
-			  begin
-			     completeByte <= {construct[6:0],bitsnow[2]};
-			     byteAvail    <= ~byteAvail;
-			  end
-		     end // if (isEdge)
-		   else
-		     begin
-			if (newCount > bitlen)
-			  decodeState <= DECODE_STATE_IDLE;
-		     end // else: !if(isEdge)		 
-	       endcase // case (decodeState)
+		   end // if (isEdge)
+		 else
+		   begin
+		      if (newCount > bitlen)
+			decodeState <= DECODE_STATE_IDLE;
+		   end // else: !if(isEdge)		 
+	     endcase // case (decodeState)
 	  end // else: !if(rst)
      end // always @ (posedge traceClkin, posedge rst)
 endmodule // swoManchIF
