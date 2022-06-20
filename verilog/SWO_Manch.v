@@ -13,8 +13,8 @@ module swoManchIF (
 		   input            clk,          // Module clock used for edge sampling
 		   
 		   // Downwards interface to the swo pin
-		   input 	    SWOina,       // SWO data rising edge (LSB)
-		   input 	    SWOinb,       // SWO data falling edge (MSB)
+		   input 	    SWOina,       // SWO data rising edge
+		   input 	    SWOinb,       // SWO data falling edge
 
 		   // DIAGNOSTIC
                    output 	    edgeOutput,
@@ -28,10 +28,11 @@ module swoManchIF (
 
    // Frame maintenance
    reg [6:0]  construct;                // Track of data being constructed
-   reg [15:0] halfbitlen;               // Clock ticks for a half bit length
-   reg [15:0] activeCount;              // Clock ticks through this bit
+   reg [16:0] halfbitlen;               // Clock ticks for a half bit length
+   reg [16:0] activeCount;              // Clock ticks through this bit
    reg [2:0]  bitcount;                 // Index through this byte
-   reg bithistory;                      // Previous state of the SWO bit
+
+   reg        oldState;                 // Previous state of the SWO bit
    
    reg [1:0]  decodeState;              // Current state of decoder
 
@@ -41,19 +42,19 @@ module swoManchIF (
    parameter DECODE_STATE_RXS_GETTING_BITS1 = 3;   
 
    // Calculations for bitlengths
-   wire [15:0] quarterbitlen    = {1'b0, halfbitlen[15:1]};
-   wire [15:0] threeightbitlen  = halfbitlen+quarterbitlen;
-   wire [15:0] bitlen           = {halfbitlen[14:0],1'b0};
+   wire [16:0] quarterbitlen    = { 1'b0, halfbitlen[16:1]};
+   wire [16:0] threeightbitlen  = halfbitlen+quarterbitlen;
+   wire [16:0] endofpacket      = { halfbitlen[13:0],1'b0,1'b0,1'b0 };
+   wire [16:0] nextCount;
 
    // Bit construction slider
-   wire [2:0] bitsnow = { bithistory, SWOinb, SWOina };
+   wire [2:0] bitsnow = { oldState, SWOina, SWOinb };
 
    // ...and edge detection
-   wire       isEdge;
-   wire       newState = SWOinb;
-      wire [15:0] newCount;
-   
-   
+   wire        isEdge;
+   wire        newState   = bitsnow[0];
+   wire [1:0]  startCount = (bitsnow[0]==bitsnow[1])?2:1;
+
    always @(posedge clk, posedge rst)
      begin
         // Default status bits
@@ -63,59 +64,56 @@ module swoManchIF (
 	  end
 	else
 	  begin
-	     bithistory <= SWOina;
-
 	     /* Calculate next count increment */
 	     case (bitsnow)
 	       3'b111, 3'b000:
 		 begin
-		    newCount = activeCount+2;
-		    isEdge = 0;
+		    nextCount = activeCount+2;
+		    isEdge    = 0;
 		 end
 	       
 	       3'b110, 3'b001:
 		 begin
-		    newCount = activeCount+1;
-		    isEdge = 1;
+		    nextCount = activeCount+1;
+		    isEdge    = 1;
 		 end
 	       
 	       3'b100, 3'b011:
 		 begin
-		    newCount = activeCount+2;
-		    isEdge = 1;
+		    nextCount = activeCount;
+		    isEdge    = 1;
 		 end
 	       
 	       3'b010, 3'b101:
 		 begin
-		    newCount = activeCount+1;
-		    isEdge = 0;
+		    nextCount = activeCount;
+		    isEdge    = 0;
 		 end
 	     endcase // case (bitsnow)
 	     
-	     activeCount <= newCount;
-			       
+	     activeCount <= nextCount;
+	     oldState    <= newState;
+	     			       
 	     case (decodeState)
 	       DECODE_STATE_IDLE: // --------------------------------------------------
 		 begin
-		    halfbitlen  <= 0;
-		    activeCount <= 0;
-		    
-		    if (isEdge && (newState==1))
+		    if ((isEdge==1) && (newState==1'b1))
 		      begin
-			 activeCount <= newCount;
 			 decodeState <= DECODE_STATE_GET_HBLEN;
+		      end
+		    else
+		      begin
+			 activeCount <= 0;
 		      end
 		 end
 	       
 	       DECODE_STATE_GET_HBLEN: // --------------------------------------------
 		 // If both halves are still high then extend count
 		 begin
-		    halfbitlen <= halfbitlen + bitsnow[0] + bitsnow[1];
-		    
-		    if (isEdge && (newState==0))
+		    if ((isEdge==1) && (newState==0))
 		      begin
-			 halfbitlen  <= newCount;
-			 activeCount <= 0;
+			 halfbitlen  <= nextCount;
+			 activeCount <= startCount;
 			 bitcount    <= 0;
 			 
 			 // Get the first half of the bit
@@ -125,57 +123,68 @@ module swoManchIF (
 	       
 	       DECODE_STATE_RXS_GETTING_BITS0: // --------------------------------------------
 		 // First part of a bit
-		 if (isEdge)
+		 if (isEdge==1)
 		   begin
-		      // This is an edge change here
-		      if (newCount < threeightbitlen)
+		      // This is an edge change here...so we restart counting
+		      activeCount   <= startCount;
+		      
+		      if (nextCount < threeightbitlen)
 			begin
 			   // This is a change at the start of a bit..so now wait for the mid-change
 			   decodeState <= DECODE_STATE_RXS_GETTING_BITS1;
-			   activeCount <= bitsnow[1]!=bitsnow[0]?1:0;
 			end
 		      else
 			begin
 			   // This is a change in the middle of a bit..so here we need to record the value
 			   // but we stay in the GETTING_BITS0 state because we're looking for another bitstart
-			   construct[bitcount] <= bitsnow[2];
-			   bitcount            <= bitcount + 1;
-			   activeCount         <= bitsnow[1]!=bitsnow[0]?1:0;
-			   
+			   bitcount <= bitcount + 1;
 			   if (bitcount==7)
 			     begin
-				completeByte <= {construct[6:0],bitsnow[2]};
+				completeByte <= {oldState,construct[6:0]};
 				byteAvail    <= ~byteAvail;
+			     end
+			   else
+			     begin
+				construct[bitcount] <= oldState;
 			     end
 			end
 		   end // else: !if(!isEdge)
 		 else
 		   begin
-		      if (newCount > bitlen)
-			decodeState <= DECODE_STATE_IDLE;
+		      if (nextCount > endofpacket)
+			begin
+			   // We ran out of packet (continious zero for more than two symbol periods)
+			   decodeState <= DECODE_STATE_IDLE;
+			end
 		   end // else: !if(isEdge)
 	       
 	       DECODE_STATE_RXS_GETTING_BITS1: // --------------------------------------------
-		 if (isEdge)
+		 if (isEdge==1)
 		   begin
 		      // This is definately a change in the middle of a bit..so here we need to record the value
-		      construct[bitcount] <= bitsnow[2];
-		      bitcount            <= bitcount + 1;
-		      activeCount         <= bitsnow[1]!=bitsnow[0]?1:0;
+		      activeCount  <= startCount;
 		      
-		      // The next bit we're looking for is the first half
+		      // The next bit we're looking for will be the first half
 		      decodeState <= DECODE_STATE_RXS_GETTING_BITS0;
 		      
+		      bitcount <= bitcount + 1;
 		      if (bitcount==7)
 			begin
-			   completeByte <= {construct[6:0],bitsnow[2]};
+			   completeByte <= {oldState,construct[6:0]};
 			   byteAvail    <= ~byteAvail;
+			end
+		      else
+			begin
+			   construct[bitcount] <= oldState;
 			end
 		   end // if (isEdge)
 		 else
 		   begin
-		      if (newCount > bitlen)
-			decodeState <= DECODE_STATE_IDLE;
+		      if (nextCount > endofpacket)
+			begin
+			   // We ran out of packet as per case above
+			   decodeState <= DECODE_STATE_IDLE;
+			end
 		   end // else: !if(isEdge)		 
 	     endcase // case (decodeState)
 	  end // else: !if(rst)
