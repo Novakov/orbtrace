@@ -38,13 +38,13 @@ module swoManchIF (
 
    parameter DECODE_STATE_IDLE              = 0;
    parameter DECODE_STATE_GET_HBLEN         = 1;
-   parameter DECODE_STATE_RXS_GETTING_BITS0 = 2;
-   parameter DECODE_STATE_RXS_GETTING_BITS1 = 3;   
+   parameter DECODE_STATE_RXS_GETTING_BITS  = 2;
 
    // Calculations for bitlengths
    wire [16:0] quarterbitlen    = { 1'b0, halfbitlen[16:1]};
-   wire [16:0] threeightbitlen  = halfbitlen+quarterbitlen;
    wire [16:0] endofpacket      = { halfbitlen[13:0],1'b0,1'b0,1'b0 };
+   wire [16:0] bitlenmin        = { halfbitlen[15:0],1'b0 } - quarterbitlen;
+
    wire [16:0] nextCount;
 
    // Bit construction slider
@@ -66,7 +66,7 @@ module swoManchIF (
 	  begin
 	     /* Calculate next count increment */
 	     case (bitsnow)
-	       3'b111, 3'b000:
+	       3'b111, 3'b000, 3'b010, 3'b101:
 		 begin
 		    nextCount = activeCount+2;
 		    isEdge    = 0;
@@ -83,109 +83,62 @@ module swoManchIF (
 		    nextCount = activeCount;
 		    isEdge    = 1;
 		 end
-	       
-	       3'b010, 3'b101:
-		 begin
-		    nextCount = activeCount;
-		    isEdge    = 0;
-		 end
 	     endcase // case (bitsnow)
 	     
 	     activeCount <= nextCount;
 	     oldState    <= newState;
+	     edgeOutput  <= 0;
 	     			       
 	     case (decodeState)
-	       DECODE_STATE_IDLE: // --------------------------------------------------
+	       DECODE_STATE_IDLE: // --------------------------------------------------------
 		 begin
 		    if ((isEdge==1) && (newState==1'b1))
 		      begin
 			 decodeState <= DECODE_STATE_GET_HBLEN;
+			 edgeOutput <= 1;  // FIXME			 
 		      end
 		    else
-		      begin
-			 activeCount <= 0;
-		      end
+		      activeCount <= 0;
 		 end
 	       
-	       DECODE_STATE_GET_HBLEN: // --------------------------------------------
+	       DECODE_STATE_GET_HBLEN: // ----------------------------------------------------
 		 // If both halves are still high then extend count
 		 begin
 		    if ((isEdge==1) && (newState==0))
 		      begin
+			 // Start looking for the middle of the first bit
 			 halfbitlen  <= nextCount;
 			 activeCount <= startCount;
 			 bitcount    <= 0;
-			 
-			 // Get the first half of the bit
-			 decodeState <= DECODE_STATE_RXS_GETTING_BITS0;
+			 decodeState <= DECODE_STATE_RXS_GETTING_BITS;
+			 edgeOutput <= 1;  // FIXME
 		      end
 		 end // case: DECODE_STATE_GET_HBLEN
 	       
-	       DECODE_STATE_RXS_GETTING_BITS0: // --------------------------------------------
+	       DECODE_STATE_RXS_GETTING_BITS: // --------------------------------------------
 		 // First part of a bit
 		 if (isEdge==1)
 		   begin
-		      // This is an edge change here...so we restart counting
-		      activeCount   <= startCount;
-		      
-		      if (nextCount < threeightbitlen)
-			begin
-			   // This is a change at the start of a bit..so now wait for the mid-change
-			   decodeState <= DECODE_STATE_RXS_GETTING_BITS1;
-			end
-		      else
+		      if (nextCount > bitlenmin)
 			begin
 			   // This is a change in the middle of a bit..so here we need to record the value
-			   // but we stay in the GETTING_BITS0 state because we're looking for another bitstart
-			   bitcount <= bitcount + 1;
+			   activeCount   <= startCount;
+			   bitcount      <= bitcount + 1;
 			   if (bitcount==7)
 			     begin
 				completeByte <= {oldState,construct[6:0]};
 				byteAvail    <= ~byteAvail;
 			     end
 			   else
-			     begin
-				construct[bitcount] <= oldState;
-			     end
+			     construct[bitcount] <= oldState;
 			end
 		   end // else: !if(!isEdge)
 		 else
 		   begin
 		      if (nextCount > endofpacket)
-			begin
-			   // We ran out of packet (continious zero for more than two symbol periods)
-			   decodeState <= DECODE_STATE_IDLE;
-			end
+			// We ran out of packet (continious zero for more than two symbol periods)
+			decodeState <= DECODE_STATE_IDLE;
 		   end // else: !if(isEdge)
-	       
-	       DECODE_STATE_RXS_GETTING_BITS1: // --------------------------------------------
-		 if (isEdge==1)
-		   begin
-		      // This is definately a change in the middle of a bit..so here we need to record the value
-		      activeCount  <= startCount;
-		      
-		      // The next bit we're looking for will be the first half
-		      decodeState <= DECODE_STATE_RXS_GETTING_BITS0;
-		      
-		      bitcount <= bitcount + 1;
-		      if (bitcount==7)
-			begin
-			   completeByte <= {oldState,construct[6:0]};
-			   byteAvail    <= ~byteAvail;
-			end
-		      else
-			begin
-			   construct[bitcount] <= oldState;
-			end
-		   end // if (isEdge)
-		 else
-		   begin
-		      if (nextCount > endofpacket)
-			begin
-			   // We ran out of packet as per case above
-			   decodeState <= DECODE_STATE_IDLE;
-			end
-		   end // else: !if(isEdge)		 
 	     endcase // case (decodeState)
 	  end // else: !if(rst)
      end // always @ (posedge traceClkin, posedge rst)

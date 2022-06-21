@@ -186,6 +186,11 @@ class TraceCore(Module):
         #phy = ClockDomainsRenamer('trace')(TracePHY(pads))
         phy = ClockDomainsRenamer('debug')(SWOManchPHY(pads))
 
+        edgeOutput = platform.request('gpio',1)
+        self.comb += edgeOutput.data.eq(phy.edgeOutput)
+        if hasattr(edgeOutput, 'dir'):
+            self.comb += edgeOutput.dir.eq(1)
+
         #fifo = ClockDomainsRenamer({'write': 'trace', 'read': 'sys'})(AsyncFIFO([('data', 128)], 512))
         fifo = ClockDomainsRenamer({'write': 'debug', 'read': 'sys'})(AsyncFIFO([('data', 8)], 8192))
 

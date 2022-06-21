@@ -18,7 +18,7 @@ class SWOManchPHY(Module):
             o2 = swo_b,
         )
 
-        edgeOutput = Signal()
+        self.edgeOutput = Signal()
 
         byteavail = Signal()
         byteavail_last = Signal()
@@ -38,7 +38,7 @@ class SWOManchPHY(Module):
             i_SWOina = swo_a,
             i_SWOinb = swo_b,
             i_clk = ClockSignal(),
-            o_edgeOutput = edgeOutput,
+            o_edgeOutput = self.edgeOutput,
 
             o_byteAvail = byteavail,
             o_completeByte = byte,
