@@ -17,7 +17,7 @@ module swoManchIF (
 		   input 	    SWOinb,       // SWO data falling edge
 
 		   // DIAGNOSTIC
-                   output 	    edgeOutput,
+                   output	    edgeOutput,
 
 		   // Upwards interface to packet processor
 		   output reg 	    byteAvail,    // Toggling indicator byte ready
@@ -42,8 +42,9 @@ module swoManchIF (
 
    // Calculations for bitlengths
    wire [16:0] quarterbitlen    = { 1'b0, halfbitlen[16:1]};
-   wire [16:0] endofpacket      = { halfbitlen[13:0],1'b0,1'b0,1'b0 };
-   wire [16:0] bitlenmin        = { halfbitlen[15:0],1'b0 } - quarterbitlen;
+   wire [16:0] endofpacket      = { halfbitlen[13:0],3'b0 };
+   wire [16:0] bitlenmin        = { halfbitlen[15:0],1'b0 } + 1;
+ //quarterbitlen;
 
    wire [16:0] nextCount;
 
@@ -51,9 +52,14 @@ module swoManchIF (
    wire [2:0] bitsnow = { oldState, SWOina, SWOinb };
 
    // ...and edge detection
-   wire        isEdge;
+   wire        isEdge     = (bitsnow[2]!=bitsnow[1]) || (bitsnow[2]!=bitsnow[0]);
+   
    wire        newState   = bitsnow[0];
    wire [1:0]  startCount = (bitsnow[0]==bitsnow[1])?2:1;
+
+
+   assign 		    edgeOutput = (nextCount >=bitlenmin);
+	       
 
    always @(posedge clk, posedge rst)
      begin
@@ -66,63 +72,44 @@ module swoManchIF (
 	  begin
 	     /* Calculate next count increment */
 	     case (bitsnow)
-	       3'b111, 3'b000, 3'b010, 3'b101:
-		 begin
-		    nextCount = activeCount+2;
-		    isEdge    = 0;
-		 end
-	       
+	       3'b111, 3'b000:
+		 nextCount = activeCount+2;
+
 	       3'b110, 3'b001:
-		 begin
-		    nextCount = activeCount+1;
-		    isEdge    = 1;
-		 end
-	       
-	       3'b100, 3'b011:
-		 begin
-		    nextCount = activeCount;
-		    isEdge    = 1;
-		 end
+		 nextCount = activeCount+1;
+
+	       default:
+	       	 nextCount = activeCount;
 	     endcase // case (bitsnow)
 	     
 	     activeCount <= nextCount;
 	     oldState    <= newState;
-	     edgeOutput  <= 0;
 	     			       
 	     case (decodeState)
 	       DECODE_STATE_IDLE: // --------------------------------------------------------
 		 begin
-		    if ((isEdge==1) && (newState==1'b1))
-		      begin
-			 decodeState <= DECODE_STATE_GET_HBLEN;
-			 edgeOutput <= 1;  // FIXME			 
-		      end
-		    else
-		      activeCount <= 0;
+		    activeCount <= 0;
+		    if ((isEdge) && (newState==1))
+		      decodeState <= DECODE_STATE_GET_HBLEN;
 		 end
 	       
 	       DECODE_STATE_GET_HBLEN: // ----------------------------------------------------
-		 // If both halves are still high then extend count
-		 begin
-		    if ((isEdge==1) && (newState==0))
-		      begin
-			 // Start looking for the middle of the first bit
-			 halfbitlen  <= nextCount;
-			 activeCount <= startCount;
-			 bitcount    <= 0;
-			 decodeState <= DECODE_STATE_RXS_GETTING_BITS;
-			 edgeOutput <= 1;  // FIXME
-		      end
-		 end // case: DECODE_STATE_GET_HBLEN
+		 if (isEdge)
+		   begin
+		      // Start looking for the middle of the first bit
+		      halfbitlen  <= nextCount;
+		      activeCount <= {14'b0,startCount};
+		      bitcount    <= 0;
+		      decodeState <= DECODE_STATE_RXS_GETTING_BITS;
+		   end
 	       
 	       DECODE_STATE_RXS_GETTING_BITS: // --------------------------------------------
-		 // First part of a bit
-		 if (isEdge==1)
+		 if (isEdge)
 		   begin
-		      if (nextCount > bitlenmin)
+		      if (nextCount >= bitlenmin)
 			begin
 			   // This is a change in the middle of a bit..so here we need to record the value
-			   activeCount   <= startCount;
+			   activeCount   <= {14'b0,startCount};
 			   bitcount      <= bitcount + 1;
 			   if (bitcount==7)
 			     begin
@@ -131,14 +118,12 @@ module swoManchIF (
 			     end
 			   else
 			     construct[bitcount] <= oldState;
-			end
+			end // if (nextCount > bitlenmin)
 		   end // else: !if(!isEdge)
 		 else
-		   begin
-		      if (nextCount > endofpacket)
-			// We ran out of packet (continious zero for more than two symbol periods)
-			decodeState <= DECODE_STATE_IDLE;
-		   end // else: !if(isEdge)
+		   if (nextCount > endofpacket)
+		     // We ran out of packet (continious zero for more than two symbol periods)
+		     decodeState <= DECODE_STATE_IDLE;
 	     endcase // case (decodeState)
 	  end // else: !if(rst)
      end // always @ (posedge traceClkin, posedge rst)
