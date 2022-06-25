@@ -29,18 +29,21 @@ module swoManchIF (
    // Frame maintenance
    reg [6:0]  construct;                // Track of data being constructed
    reg [16:0] halfbitlen;               // Clock ticks for a half bit length
-   reg [16:0] activeCount;              // Clock ticks through this bit
+   reg [MAXBITLEN:0] activeCount;       // Clock ticks through this bit
    reg [2:0]  bitcount;                 // Index through this byte
 
    reg [1:0]  decodeState;              // Current state of decoder
+
+   // Max count for bitlength calculations
+   parameter MAXBITLEN          = 16;
 
    parameter DECODE_STATE_IDLE              = 0;
    parameter DECODE_STATE_GET_HBLEN         = 1;
    parameter DECODE_STATE_RXS_GETTING_BITS  = 2;
 
    // Calculations for bitlengths
-   wire [16:0] endofpacket      = { halfbitlen[13:0],3'b0 };
-   wire [16:0] bitlenmin        = { halfbitlen[15:0],1'b0 } - 2;
+   wire [MAXBITLEN:0] endofpacket      = { halfbitlen[MAXBITLEN-3:0],3'b0 };
+   wire [MAXBITLEN:0] bitlenmin        = { halfbitlen[MAXBITLEN-1:0],1'b0 } - 1;
 
    // Bit construction slider
    reg [2:0]   bitsnow;
@@ -70,7 +73,7 @@ module swoManchIF (
 	     case (decodeState)
 	       DECODE_STATE_IDLE: // --------------------------------------------------------
 		 begin
-		    activeCount <= 1;
+		    activeCount <= 0;
 		    if ((isEdge) && (newState==1))
 		      decodeState <= DECODE_STATE_GET_HBLEN;
 		 end
@@ -80,7 +83,7 @@ module swoManchIF (
 		   begin
 		      // Start looking for the middle of the first bit
 		      halfbitlen  <= activeCount;
-		      activeCount <= 1;
+		      activeCount <= 0;
 		      bitcount    <= 0;
 		      decodeState <= DECODE_STATE_RXS_GETTING_BITS;
 		   end
@@ -91,7 +94,7 @@ module swoManchIF (
 		      if (activeCount >= bitlenmin)
 			begin
 			   // This is a change in the middle of a bit..so here we need to record the value
-			   activeCount   <= 1;
+			   activeCount   <= 0;
 			   bitcount      <= bitcount + 1;
 			   if (bitcount==7)
 			     begin
