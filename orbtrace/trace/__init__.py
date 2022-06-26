@@ -1,10 +1,10 @@
 from migen import *
 from migen.genlib.cdc import MultiReg
 
-from litex.soc.interconnect.stream import Endpoint, AsyncFIFO, Pipeline, CombinatorialActor
+from litex.soc.interconnect.stream import Endpoint, AsyncFIFO, Pipeline, CombinatorialActor, Converter
 from litex.build.io import DDRInput
 
-from .swo import SWOManchPHY
+from .swo import ManchesterDecoder, SWOManchPHY, PulseLengthCapture, BitsToBytes
 
 class TracePHY(Module):
     def __init__(self, pads):
@@ -101,7 +101,7 @@ class Monitor(Module):
         clk = Signal(2)
 
         #self.sync.trace += [
-        self.sync.debug += [
+        self.sync.swo += [
             If(stream.valid,
                 total.eq(total + 1),
             ),
@@ -184,15 +184,23 @@ class TraceCore(Module):
 
         # Main pipeline.
         #phy = ClockDomainsRenamer('trace')(TracePHY(pads))
-        phy = ClockDomainsRenamer('debug')(SWOManchPHY(pads))
+        #phy = ClockDomainsRenamer('swo')(SWOManchPHY(pads))
 
-        edgeOutput = platform.request('gpio',1)
-        self.comb += edgeOutput.data.eq(phy.edgeOutput)
-        if hasattr(edgeOutput, 'dir'):
-            self.comb += edgeOutput.dir.eq(1)
+        phy = ClockDomainsRenamer('swo2x')(PulseLengthCapture(pads, 16))
+        manchester_decoder = ClockDomainsRenamer('swo')(ManchesterDecoder(16))
+        #to_byte = ClockDomainsRenamer('swo')(Converter(1, 8))
+        to_byte = ClockDomainsRenamer('swo')(BitsToBytes())
+
+        #edgeOutput = platform.request('gpio',1)
+        #self.comb += edgeOutput.data.eq(phy.edgeOutput)
+        #if hasattr(edgeOutput, 'dir'):
+        #    self.comb += edgeOutput.dir.eq(1)
 
         #fifo = ClockDomainsRenamer({'write': 'trace', 'read': 'sys'})(AsyncFIFO([('data', 128)], 512))
-        fifo = ClockDomainsRenamer({'write': 'debug', 'read': 'sys'})(AsyncFIFO([('data', 8)], 8192))
+        #fifo = ClockDomainsRenamer({'write': 'swo', 'read': 'sys'})(AsyncFIFO([('data', 8)], 8192))
+        #fifo = ClockDomainsRenamer({'write': 'swo', 'read': 'sys'})(AsyncFIFO([('data', 8)], 4))
+        fifo_a = ClockDomainsRenamer({'write': 'swo2x', 'read': 'swo'})(AsyncFIFO([('count', 16), ('level', 1)], 4))
+        fifo_b = ClockDomainsRenamer({'write': 'swo', 'read': 'sys'})(AsyncFIFO([('data', 8)], 4))
 
         byteswap = ByteSwap(16)
 
@@ -200,13 +208,16 @@ class TraceCore(Module):
 
         self.submodules += Pipeline(
             phy,
-            fifo,
+            fifo_a,
+            manchester_decoder,
+            to_byte,
+            fifo_b,
             #byteswap,
             #injector,
             source,
         )
 
-        self.submodules += phy, fifo, byteswap, injector
+        self.submodules += phy, manchester_decoder, to_byte, fifo_a, fifo_b, byteswap, injector
 
         # Config.
         #self.comb += phy.width.eq(self.width)
