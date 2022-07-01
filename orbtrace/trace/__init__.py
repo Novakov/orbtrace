@@ -1,7 +1,7 @@
 from migen import *
 from migen.genlib.cdc import MultiReg
 
-from litex.soc.interconnect.stream import Endpoint, AsyncFIFO, Pipeline, CombinatorialActor, Converter
+from litex.soc.interconnect.stream import Endpoint, AsyncFIFO, Pipeline, CombinatorialActor, Converter, SyncFIFO
 from litex.build.io import DDRInput
 
 from .swo import ManchesterDecoder, SWOManchPHY, PulseLengthCapture, BitsToBytes
@@ -170,6 +170,51 @@ class Keepalive(Module):
             source.last.eq(1),
         ]
 
+class StreamFlush(Module):
+    def __init__(self, timeout):
+        self.sink = sink = Endpoint([('data', 8)])
+        self.source = source = Endpoint([('data', 8)])
+
+        timeout_cnt = Signal(max = timeout + 1)
+        timeout_hit = Signal()
+
+        data = Signal(8)
+        first = Signal()
+        last = Signal()
+        valid = Signal()
+
+        self.comb += [
+            timeout_hit.eq(timeout_cnt == 0),
+
+            sink.ready.eq(~valid | (source.ready & source.valid)),
+
+            source.data.eq(data),
+            source.first.eq(first),
+            source.last.eq(last | timeout_hit),
+            source.valid.eq(valid & (sink.valid | timeout_hit)),
+        ]
+
+        self.sync += [
+            If(valid & ~timeout_hit,
+                timeout_cnt.eq(timeout_cnt - 1),
+            ),
+
+            If(source.valid & source.ready,
+                valid.eq(0),
+            ),
+
+            If(sink.valid & sink.ready,
+                data.eq(sink.data),
+                first.eq(sink.first),
+                last.eq(sink.last),
+                valid.eq(1),
+
+                If(~valid | timeout_hit,
+                    timeout_cnt.eq(timeout),
+                ),
+            ),
+        ]
+
 class TraceCore(Module):
     def __init__(self, platform):
         #self.clock_domains.cd_trace = ClockDomain()
@@ -201,10 +246,13 @@ class TraceCore(Module):
         #fifo = ClockDomainsRenamer({'write': 'swo', 'read': 'sys'})(AsyncFIFO([('data', 8)], 4))
         fifo_a = ClockDomainsRenamer({'write': 'swo2x', 'read': 'swo'})(AsyncFIFO([('count', 16), ('level', 1)], 4))
         fifo_b = ClockDomainsRenamer({'write': 'swo', 'read': 'sys'})(AsyncFIFO([('data', 8)], 4))
+        fifo_c = SyncFIFO([('data', 8)], 8192, buffered = True)
 
         byteswap = ByteSwap(16)
 
         injector = Injector()
+
+        stream_flush = StreamFlush(7500000)
 
         self.submodules += Pipeline(
             phy,
@@ -214,10 +262,12 @@ class TraceCore(Module):
             fifo_b,
             #byteswap,
             #injector,
+            stream_flush,
+            fifo_c,
             source,
         )
 
-        self.submodules += phy, manchester_decoder, to_byte, fifo_a, fifo_b, byteswap, injector
+        self.submodules += phy, manchester_decoder, to_byte, fifo_a, fifo_b, byteswap, injector, stream_flush, fifo_c
 
         # Config.
         #self.comb += phy.width.eq(self.width)
