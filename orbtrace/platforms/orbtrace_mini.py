@@ -43,8 +43,10 @@ _io = [
 
     # Trace
     ('trace', 0,
-        Subsignal('clk',  Pins('C8')),
-        Subsignal('data', Pins('A10 B9 A9 B8')),
+        # Subsignal('clk',  Pins('C8')),
+        # Subsignal('data', Pins('A10 B9 A9 B8')),
+        Subsignal('clk',  Pins('A2')),
+        Subsignal('data', Pins('A3 B4 A5 C7')),
         IOStandard('LVCMOS33')
     ),
 
@@ -61,23 +63,23 @@ _io = [
 
     # GPIO
     ('gpio', 0,
-        Subsignal('data', Pins('A2')),
+        # Subsignal('data', Pins('A2')),
         Subsignal('dir',  Pins('B3')),
     ),
     ('gpio', 1,
-        Subsignal('data', Pins('A3')),
+        # Subsignal('data', Pins('A3')),
         Subsignal('dir',  Pins('A4')),
     ),
     ('gpio', 2,
-        Subsignal('data', Pins('B4')),
+        # Subsignal('data', Pins('B4')),
         Subsignal('dir',  Pins('B5')),
     ),
     ('gpio', 3,
-        Subsignal('data', Pins('A5')),
+        # Subsignal('data', Pins('A5')),
         Subsignal('dir',  Pins('A6')),
     ),
     ('gpio', 4,
-        Subsignal('data', Pins('C7')),
+        # Subsignal('data', Pins('C7')),
         Subsignal('dir',  Pins('B7')),
     ),
     ('gpio', 5,

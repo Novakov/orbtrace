@@ -364,10 +364,13 @@ class OrbSoC(SoCCore):
         is_v2 = Signal()
         self.comb += self.cmsis_dap.is_v2.eq(is_v2)
 
-        can = self.platform.request('gpio', 0)
-        self.comb += can.data.eq(self.cmsis_dap.can)
-        if hasattr(can, 'dir'):
-            self.comb += can.dir.eq(1)
+        # can = self.platform.request('gpio', 0)
+        # self.comb += can.data.eq(self.cmsis_dap.can)
+        # if hasattr(can, 'dir'):
+        #     self.comb += can.dir.eq(1)
+
+        for i in range(0, 5):
+            self.comb += self.platform.request('gpio', i).dir.eq(0)
 
         if with_v1 and with_v2:
             out_mux = Multiplexer(stream_desc, 2)
