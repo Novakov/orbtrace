@@ -698,7 +698,7 @@ class OrbSoC(SoCCore):
             d.idProduct          = pid
 
             d.iManufacturer      = "Orbcode"
-            d.iProduct           = "Orbtrace Bootloader" if pid == 0x3442 else "Orbtrace Test" if pid == 0x0001 else "Orbtrace"
+            d.iProduct           = "Orbtrace Bootloader" if pid == 0x3442 else "Orbtrace Test" if pid == 0x0001 else "Orbtrace MN"
             d.iSerialNumber      = "N/A"
 
             d.bNumConfigurations = 1
